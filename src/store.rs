@@ -110,6 +110,7 @@ mod tests {
     fn some_lease(owner: &str) -> Lease {
         Lease::new(crate::lease::LeaseTerms {
             owner: owner.to_owned(),
+            cluster: crate::lease::default_cluster(),
             mode: Mode::HostTrusted,
             level: Level::Vm,
             bmc_password: None,

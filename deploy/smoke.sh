@@ -9,12 +9,13 @@ URL=${URL:-http://dpusimaas.tuchfeld.dev}
 HOST=${HOST:-aarchv}
 X86_HV=${X86_HV:-}
 OWNER=${OWNER:-smoke-test}
+CLUSTER=${CLUSTER:-smoke-test}
 PASSWORD=SmokeTest123
 
 fail() { echo "FAIL: $*" >&2; [ -n "${id:-}" ] && curl -s -X DELETE "$URL/v1/dpus/$id" >/dev/null; exit 1; }
 field() { python3 -c "import json,sys; print(json.load(sys.stdin)$1)"; }
 
-lease=$(curl -sf --max-time 120 -X POST "$URL/v1/dpus" -d "{\"owner\":\"$OWNER\",\"mode\":\"zero-trust\",\"bmc_password\":\"$PASSWORD\",\"ttl_hours\":1}") \
+lease=$(curl -sf --max-time 120 -X POST "$URL/v1/dpus" -d "{\"owner\":\"$OWNER\",\"cluster\":\"$CLUSTER\",\"mode\":\"zero-trust\",\"bmc_password\":\"$PASSWORD\",\"ttl_hours\":1}") \
     || fail "couldn't lease a DPU"
 id=$(field "['id']" <<<"$lease"); ip=$(field "['ip']" <<<"$lease"); serial=$(field "['serial']" <<<"$lease")
 ipmi_user=$(field "['ipmi_user']" <<<"$lease"); ipmi_password=$(field "['ipmi_password']" <<<"$lease")
@@ -35,14 +36,18 @@ ipmi cycle >/dev/null || fail "IPMI power cycle"
 curl -sf "$URL/v1/dpus/$id" | grep -q '"host cycle"' || fail "the power cycle didn't reach dpusimaas"
 echo "ok   IPMI power status and cycle"
 
+gateway=$(curl -sf "$URL/v1/fabric?cluster=$CLUSTER" | field "['gateway']") || fail "no leaf for $CLUSTER"
+ssh "$HOST" "podman exec dpusim-leaf-$CLUSTER ip link show swp$id >/dev/null" || fail "the leaf has no port for $id"
+echo "ok   leaf of $CLUSTER at $gateway, with a port for $id"
+
 curl -sf -o /dev/null -X DELETE "$URL/v1/dpus/$id" || fail "couldn't end the lease"
-left=$(ssh "$HOST" "{ ip netns list; ip -br link; } | grep -cE 'dpusim-$id|dsa-$id' || true")
-[ "$left" = 0 ] || fail "lease $id left its namespace or veth behind"
+left=$(ssh "$HOST" "{ ip netns list; ip -br link; podman ps --format '{{.Names}}'; } | grep -cE 'dpusim-$id|dsa-$id|ds[up]-$id|dpusim-leaf-$CLUSTER' || true")
+[ "$left" = 0 ] || fail "lease $id left its namespace, links or leaf behind"
 id=
 echo "ok   lease ended, nothing left behind"
 
 if [ -n "$X86_HV" ]; then
-    lease=$(curl -sf --max-time 300 -X POST "$URL/v1/dpus" -d "{\"owner\":\"$OWNER\",\"mode\":\"host-trusted\",\"ttl_hours\":1}") \
+    lease=$(curl -sf --max-time 300 -X POST "$URL/v1/dpus" -d "{\"owner\":\"$OWNER\",\"cluster\":\"$CLUSTER\",\"mode\":\"host-trusted\",\"ttl_hours\":1}") \
         || fail "couldn't lease a host-trusted DPU host"
     id=$(field "['id']" <<<"$lease"); ip=$(field "['ip']" <<<"$lease"); vm=$(field "['host']['vm']" <<<"$lease")
     ipmi_user=$(field "['ipmi_user']" <<<"$lease"); ipmi_password=$(field "['ipmi_password']" <<<"$lease")

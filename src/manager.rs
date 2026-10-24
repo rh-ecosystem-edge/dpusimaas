@@ -13,8 +13,9 @@ use tokio_util::sync::{CancellationToken, DropGuard};
 use crate::{
     bmc::{self, MockBmc},
     dhcp::{self, DhcpLease},
+    fabric,
     host::{HostConfig, Link},
-    lease::{Lease, LeaseState, LeaseTerms, Level, Mode, expiry, until_text},
+    lease::{Lease, LeaseState, LeaseTerms, Level, Mode, default_cluster, expiry, until_text},
     netns,
     store::LeaseStore,
     vm::{self, DpuHost, VmConfig, VmPowerAction},
@@ -74,6 +75,7 @@ pub struct LeaseManager {
 #[serde(default)]
 pub struct CreateRequest {
     owner: Option<String>,
+    cluster: Option<String>,
     mode: Option<String>,
     level: Option<String>,
     bmc_password: Option<String>,
@@ -88,12 +90,29 @@ impl CreateRequest {
             .ok_or_else(|| Refusal::Invalid("owner is required".to_owned()))?;
         Ok(LeaseTerms {
             owner,
+            cluster: parse_cluster(self.cluster)?,
             mode: parse_mode(self.mode.as_deref().unwrap_or_default())?,
             level: parse_level(self.level.as_deref().unwrap_or_default())?,
             bmc_password: self.bmc_password.filter(|password| !password.is_empty()),
             expires: expiry(self.ttl_hours.unwrap_or_default()),
         })
     }
+}
+
+fn parse_cluster(requested: Option<String>) -> Result<String, Refusal> {
+    let Some(cluster) = requested.filter(|cluster| !cluster.is_empty()) else {
+        return Ok(default_cluster());
+    };
+    let valid = cluster.len() <= 40
+        && cluster
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+    if !valid {
+        return Err(Refusal::Invalid(
+            "cluster must be up to 40 lowercase letters, digits and dashes".to_owned(),
+        ));
+    }
+    Ok(cluster)
 }
 
 fn parse_mode(requested: &str) -> Result<Mode, Refusal> {
@@ -206,6 +225,7 @@ impl LeaseManager {
         let stop_on_failure: DropGuard = stop.clone().drop_guard();
         netns::ensure(lease, &self.config.bridge).await?;
         let address = dhcp::acquire_address(lease, lease.ip).await?;
+        fabric::attach(&self.config.vm.dpusim, lease, &self.config.bridge).await?;
         let mock_bmc = self.start_bmcs(lease, &stop).await?;
         let runtime = LeaseRuntime {
             mock_bmc: Some(mock_bmc.clone()),
@@ -225,6 +245,7 @@ impl LeaseManager {
         let stop_on_failure: DropGuard = stop.clone().drop_guard();
         netns::ensure(lease, &self.config.bridge).await?;
         let address = dhcp::acquire_address(lease, lease.ip).await?;
+        fabric::attach(&self.config.vm.dpusim, lease, &self.config.bridge).await?;
         let host_config = &self.config.host;
         let host = host_config
             .ensure(lease)
@@ -288,6 +309,9 @@ impl LeaseManager {
             && let Err(error) = self.config.host.delete(&lease).await
         {
             tracing::error!(lease = lease_id, "deleting the host VM: {error:#}");
+        }
+        if let Err(error) = fabric::detach(&self.config.vm.dpusim, &lease).await {
+            tracing::error!(lease = lease_id, "detaching from the leaf: {error:#}");
         }
         netns::delete(lease_id).await;
         let work_dir = self.work_dir(lease_id);

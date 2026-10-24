@@ -7,6 +7,7 @@ mod api;
 mod bmc;
 mod command;
 mod dhcp;
+mod fabric;
 mod host;
 mod lease;
 mod manager;

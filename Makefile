@@ -16,7 +16,7 @@
 
 ARM_HV     ?= aarchv
 X86_HV     ?= hv2
-DPUSIM_SRC ?= $(HOME)/repos/openshift-dpf-sim/sim/dpusim
+DPUSIM_SRC ?= $(HOME)/repos/openshift-dpf/sim/dpusim
 PREFIX     ?= /opt/dpusimaas
 DPF_VERSION         ?= v26.4.1
 HOSTDRIVER_SIM_REPO ?= quay.io/otuchfel/hostdriver-sim

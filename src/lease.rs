@@ -83,6 +83,9 @@ pub enum LeaseState {
 pub struct Lease {
     pub id: String,
     pub owner: String,
+    /// The cluster the DPU is for: a cluster's DPUs share a leaf router (see fabric).
+    #[serde(default = "default_cluster")]
+    pub cluster: String,
     pub mode: Mode,
     #[serde(default = "default_level", deserialize_with = "level_or_vm")]
     pub level: Level,
@@ -138,10 +141,16 @@ const MAX_EVENTS: usize = 200;
 /// What a new lease is for, once its request is validated.
 pub struct LeaseTerms {
     pub owner: String,
+    pub cluster: String,
     pub mode: Mode,
     pub level: Level,
     pub bmc_password: Option<String>,
     pub expires: Option<DateTime<Utc>>,
+}
+
+/// Leases from before clusters, and requests that name none.
+pub fn default_cluster() -> String {
+    "default".to_owned()
 }
 
 impl Lease {
@@ -163,6 +172,7 @@ impl Lease {
             host: None,
             events: Vec::new(),
             owner: terms.owner,
+            cluster: terms.cluster,
             id,
         };
         lease.record(format!(
@@ -282,6 +292,7 @@ mod tests {
     fn events_are_capped() {
         let mut lease = Lease::new(LeaseTerms {
             owner: "someone".to_owned(),
+            cluster: default_cluster(),
             mode: Mode::ZeroTrust,
             level: Level::Vm,
             bmc_password: None,

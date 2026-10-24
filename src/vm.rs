@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 
 use crate::{
     command::{output, run, succeeds},
+    fabric,
     lease::Lease,
 };
 
@@ -89,6 +90,7 @@ impl VmConfig {
         let vcpus = self.vcpus.to_string();
         let memory = self.memory_mib.to_string();
         let bfcfg_arg = bfcfg_path.to_string_lossy();
+        let uplink = fabric::uplink_bridge(lease);
         let mut args: Vec<&str> = vec![
             "dpu-vm",
             "create",
@@ -107,6 +109,8 @@ impl VmConfig {
             &vcpus,
             "--memory",
             &memory,
+            "--uplink-bridge",
+            &uplink,
         ];
         if let Some(host) = host {
             args.extend([

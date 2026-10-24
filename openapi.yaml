@@ -59,6 +59,27 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /v1/fabric:
+    get:
+      summary: A cluster's leaf router
+      description: >-
+        The leaf router the cluster's DPUs are cabled to. Its LAN address is the cluster's nodes'
+        next hop to the DPUs' VTEP subnet (openshift-dpf's SIMULATED_DPUS_ONLY routes it).
+      parameters:
+        - name: cluster
+          in: query
+          schema: { type: string, default: default }
+      responses:
+        "200":
+          description: The leaf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cluster: { type: string }
+                  gateway: { type: string, description: The leaf's LAN address }
+        "404": { $ref: "#/components/responses/Error" }
   /v1/dpus/{id}:
     parameters:
       - $ref: "#/components/parameters/ID"
@@ -167,6 +188,11 @@ components:
       required: [owner]
       properties:
         owner: { type: string, description: Who the lease is for (GitHub login) }
+        cluster:
+          type: string
+          description: >-
+            The cluster the DPU is for (lowercase letters, digits, dashes; default "default"). A
+            cluster's DPUs are cabled to one leaf router, which HBN peers with; see /v1/fabric.
         mode: { $ref: "#/components/schemas/Mode" }
         level: { $ref: "#/components/schemas/Level" }
         bmc_password:
@@ -181,6 +207,7 @@ components:
       properties:
         id: { type: string }
         owner: { type: string }
+        cluster: { type: string }
         mode: { $ref: "#/components/schemas/Mode" }
         level: { $ref: "#/components/schemas/Level" }
         created: { type: string, format: date-time }

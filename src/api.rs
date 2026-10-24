@@ -19,7 +19,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     bmc::HostPowerAction,
-    lease::{Lease, Level, Mode},
+    fabric,
+    lease::{Lease, Level, Mode, default_cluster},
     manager::{CreateRequest, LeaseManager, Refusal},
     vm::VmPowerAction,
 };
@@ -36,6 +37,7 @@ pub fn public_router(manager: Arc<LeaseManager>) -> Router {
         .route("/v1/openapi.yaml", get(openapi_spec))
         .route("/v1/info", get(info))
         .route("/v1/dpus", get(list_leases).post(create_lease))
+        .route("/v1/fabric", get(get_fabric))
         .route("/v1/dpus/{id}", get(get_lease).delete(delete_lease))
         .route("/v1/dpus/{id}/renew", post(renew_lease))
         .route(
@@ -169,6 +171,29 @@ async fn list_leases(State(manager): Manager, Query(filter): Query<LeaseFilter>)
         })
         .collect();
     pretty_json(StatusCode::OK, &leases)
+}
+
+#[derive(Deserialize)]
+struct FabricQuery {
+    cluster: Option<String>,
+}
+
+#[derive(Serialize)]
+struct Fabric {
+    cluster: String,
+    /// The leaf router's LAN address: the next hop to the cluster's DPUs' VTEP subnet.
+    gateway: String,
+}
+
+async fn get_fabric(State(manager): Manager, Query(query): Query<FabricQuery>) -> ApiResult {
+    let cluster = query
+        .cluster
+        .filter(|cluster| !cluster.is_empty())
+        .unwrap_or_else(default_cluster);
+    let gateway = fabric::address(&manager.config.vm.dpusim, &cluster)
+        .await
+        .ok_or(Refusal::NotFound)?;
+    Ok(pretty_json(StatusCode::OK, &Fabric { cluster, gateway }))
 }
 
 async fn create_lease(State(manager): Manager, body: Bytes) -> ApiResult {
