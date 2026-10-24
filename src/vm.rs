@@ -138,7 +138,6 @@ impl VmConfig {
                 &lease.vm,
                 "--hypervisor",
                 "local",
-                "--keep-cluster",
             ],
         )
         .await

@@ -20,7 +20,6 @@ DPUSIM_SRC ?= $(HOME)/repos/openshift-dpf-sim/sim/dpusim
 PREFIX     ?= /opt/dpusimaas
 DPF_VERSION         ?= v26.4.1
 HOSTDRIVER_SIM_REPO ?= quay.io/otuchfel/hostdriver-sim
-OVNK_DPF_SRC        ?= $(HOME)/repos/ovn-kubernetes-dpf-sim
 
 .PHONY: build build-dpusimaas build-mockbmc build-dpusim deploy smoke qemu hostdriver-image ovn-sim status logs test
 
@@ -60,7 +59,7 @@ hostdriver-image:
 
 # Simulated DPUs' OVN-Kubernetes: --simulate-dpu, and the host PF MAC from the node name.
 ovn-sim:
-	OVNK_DPF_SRC=$(OVNK_DPF_SRC) ovn-sim/build.sh
+	ovn-sim/build.sh
 
 smoke:
 	HOST=$(ARM_HV) X86_HV=$(X86_HV) deploy/smoke.sh

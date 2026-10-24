@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Builds and pushes DPF's OVN-Kubernetes chart and dpf-utils image for simulated DPUs, from an
-# ovn-kubernetes-dpf checkout with the simulateDPU toggle (dpuManifests.simulateDPU): DPF's released
-# chart with that checkout's DPU templates, defaulting to the released dpf-utils image with that
-# checkout's cniprovisioner. openshift-dpf deploys it with SIMULATED_DPUS_ONLY=true (OVN_CHART_URL,
-# OVN_CHART_VERSION).
+# Builds and pushes DPF's OVN-Kubernetes chart and dpf-utils image for simulated DPUs: upstream
+# ovn-kubernetes-dpf at $VERSION with simulate-dpu.patch (the simulateDPU toggle,
+# dpuManifests.simulateDPU). That's DPF's released chart with the patched DPU templates, defaulting
+# to the released dpf-utils image with the patched cniprovisioner. openshift-dpf deploys it with
+# SIMULATED_DPUS_ONLY=true.
 set -euo pipefail
 
-SRC=${OVNK_DPF_SRC:?an ovn-kubernetes-dpf checkout with the simulateDPU toggle}
+here="$(cd "$(dirname "$0")" && pwd)"
 VERSION=${OVN_VERSION:-v26.4.1-ocp-release-v4.22}
 IMAGE_REPO=${OVN_SIM_IMAGE_REPO:-quay.io/otuchfel/ovn-kubernetes-dpf-utils}
 CHART_REPO=${OVN_SIM_CHART_REPO:-oci://quay.io/otuchfel/charts}
@@ -14,6 +14,10 @@ tag=${VERSION}-simdpu
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+
+SRC=$work/ovn-kubernetes-dpf
+git -c advice.detachedHead=false clone -q --depth 1 --branch "$VERSION" https://github.com/Mellanox/ovn-kubernetes-dpf "$SRC"
+git -C "$SRC" apply "$here/simulate-dpu.patch"
 
 echo "dpf-utils image ${IMAGE_REPO}:${tag}"
 for arch in amd64 arm64; do
