@@ -1,0 +1,55 @@
+#!/bin/bash
+# The BlueField-3 DPF's host components look for, built once per boot under /var/lib/dpf/dpusim
+# (in the host agent's container, the only one of the pod with /var/lib/dpf; see /hostagent). The
+# containers then mount the fake PCI tree over /sys/bus/pci in their own mount namespaces. The
+# DPU's serial (and dpusimaas' address) come from /var/lib/dpf/dpusim/lease.env, which the host's
+# dpusim-bf3-host.service writes (openshift-dpf's SIMULATED_DPUS_ONLY MachineConfig).
+set -euo pipefail
+state=/var/lib/dpf/dpusim
+. "${state}/lease.env"
+exec 9>"${state}/setup.lock"
+flock 9
+boot=$(cat /proc/sys/kernel/random/boot_id)
+[ "$(cat "${state}/setup.boot" 2>/dev/null)" = "${boot}" ] && exit 0
+
+# The BlueField's PFs: the host VM's igb pair from the patched QEMU (the only igb functions with
+# VPD), which the host already makes read as a BlueField-3 to DPF's detector. Without them (no
+# patched QEMU), a made-up pair of dummy netdevs.
+pfs=() names=()
+for dev in /sys/bus/pci/devices/*; do
+    [ -e "${dev}/vpd" ] && [ "$(basename "$(readlink -f "${dev}/driver")")" = igb ] || continue
+    pfs+=("$(basename "${dev}")") names+=("$(ls "${dev}/net")")
+done
+if [ "${#pfs[@]}" -eq 0 ]; then
+    pfs=(0000:4d:00.0 0000:4d:00.1) names=(ens1f0np0 ens1f1np1)
+fi
+
+pci=${state}/pci
+rm -rf "${pci}"
+for i in "${!pfs[@]}"; do
+    d=${pci}/devices/${pfs[i]}
+    mkdir -p "${d}/net/${names[i]}"
+    echo 0xa2dc > "${d}/device"
+    # VPD-R: large tag 0x90, length 15, keyword SN, length 12, serial; end tag.
+    printf '\x90\x0f\x00SN\x0c%s\x78' "${DPUSIM_SERIAL}" > "${d}/vpd"
+    echo 0 > "${d}/sriov_numvfs"
+    ln -sfn ../../drivers/mlx5_core "${d}/driver"
+done
+mkdir -p "${pci}/devices/${pfs[0]}/virtfn0/net/ens1f0v0" "${pci}/drivers/mlx5_core"
+touch "${pci}/drivers/mlx5_core/bind" "${pci}/drivers/mlx5_core/unbind"
+
+# The netdevs that don't exist (host network namespace), at the OOB bridge's MTU.
+mtu=$(cat /sys/class/net/br-dpu/mtu 2>/dev/null || echo 1500)
+for l in "${names[@]}" ens1f0v0; do
+    ip link show "${l}" >/dev/null 2>&1 || ip link add "${l}" mtu "${mtu}" type dummy
+    ip link set "${l}" up
+done
+
+# The rshim device the host agent reads the BlueField's status from.
+# (Its PCI function: the PFs' third.)
+echo "${pfs[0]%.*}.2" > "${state}/rshim-dev"
+mkdir -p /dev/rshim0
+touch /dev/rshim0/misc
+[ -s "${state}/boot_id" ] || cat /proc/sys/kernel/random/boot_id > "${state}/boot_id"
+echo "${boot}" > "${state}/setup.boot"
+/usr/local/libexec/dpusim-host/log setup "BF3 ${DPUSIM_SERIAL} at ${pfs[*]} (${names[*]})"

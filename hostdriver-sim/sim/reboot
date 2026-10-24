@@ -1,0 +1,4 @@
+#!/bin/bash
+# The host and its DPU came back: a new boot_id.
+/usr/bin/cat /proc/sys/kernel/random/uuid > /var/lib/dpf/dpusim/boot_id
+/usr/local/libexec/dpusim-host/log reboot "new boot_id $(/usr/bin/cat /var/lib/dpf/dpusim/boot_id)"

@@ -1,0 +1,23 @@
+#!/bin/bash
+# dpusim: NVIDIA DMS's client, for a host whose DPU is a dpusimaas VM. Installing the bf.cfg boots
+# that VM: dpusimaas gets it (for the lease with the DPU's serial), like the BlueField would over
+# rshim.
+/usr/local/libexec/dpusim-host/log "$(basename "$0")" "$@"
+case "$*" in
+  *" get "*) echo '{"nvidia/mode/config/mode": "DPU"}' ;;
+  *" os install "*)
+    pkg=$(sed -n 's/.*--pkg \([^ ]*\).*/\1/p' <<< "$*")
+    case "${pkg}" in
+      *.bfb) rm -f "${pkg}" ;;  # nothing to flash; free the space
+      *.cfg)
+        . /var/lib/dpf/dpusim/lease.env 2>/dev/null || . /tmp/dms/dpusim/lease.env
+        lease=$(curl -fsS "${DPUSIMAAS_URL}/v1/dpus?serial=${DPUSIM_SERIAL}" \
+            | sed -n 's/^ *"id": *"\([0-9a-f]*\)".*/\1/p' | head -1)
+        [ -n "${lease}" ] || { echo "dpusimaas has no lease for DPU ${DPUSIM_SERIAL}" >&2; exit 1; }
+        curl -fsS -X POST --data-binary "@${pkg}" -H 'Content-Type: application/octet-stream' \
+            "${DPUSIMAAS_URL}/v1/dpus/${lease}/boot?host_node=${KUBERNETES_NODE_NAME:-}" >/dev/null || exit 1
+        ;;
+    esac
+    ;;
+esac
+exit 0

@@ -1,0 +1,40 @@
+--- a/hw/net/igb_core.h
++++ b/hw/net/igb_core.h
+@@ -65,6 +65,13 @@
+ 
+ struct IGBCore {
+     uint32_t mac[E1000E_MAC_SIZE];
++    /*
++     * x-vf-loopback: when false, never switch VM to VM traffic locally even if
++     * the guest enables it (DTXSWC.Loopback_en); every packet goes out on the
++     * wire, where an external switch does the switching (as the eswitch of a
++     * BlueField does for its VFs).
++     */
++    bool vf_loopback;
+     uint16_t phy[MAX_PHY_REG_ADDRESS + 1];
+     uint16_t eeprom[IGB_EEPROM_SIZE];
+ 
+--- a/hw/net/igb_core.c
++++ b/hw/net/igb_core.c
+@@ -533,6 +533,11 @@
+         goto send_out;
+     }
+ 
++    /* ... and is disabled altogether by x-vf-loopback=off. */
++    if (!core->vf_loopback) {
++        goto send_out;
++    }
++
+     context.core = core;
+     context.nc = nc;
+ 
+--- a/hw/net/igb.c
++++ b/hw/net/igb.c
+@@ -680,6 +680,7 @@
+     DEFINE_NIC_PROPERTIES(IGBState, conf),
+     DEFINE_PROP_BOOL("x-pcie-flr-init", IGBState, has_flr, true),
+     DEFINE_PROP_STRING("x-vpd-serial", IGBState, vpd_serial),
++    DEFINE_PROP_BOOL("x-vf-loopback", IGBState, core.vf_loopback, true),
+     DEFINE_PROP_END_OF_LIST(),
+ };
+ 

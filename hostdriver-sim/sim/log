@@ -1,0 +1,6 @@
+#!/bin/bash
+# Every stand-in call, for whoever wants to see what DPF did to the "hardware" (the DMS container,
+# without /var/lib/dpf, logs to the pod's /tmp/dms).
+dir=/var/lib/dpf/dpusim
+[ -d "${dir}" ] || dir=/tmp/dms/dpusim
+echo "$(date -u +%FT%TZ) $*" >> "${dir}/hw.log"

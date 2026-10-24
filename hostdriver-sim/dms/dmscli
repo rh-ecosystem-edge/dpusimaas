@@ -1,0 +1,3 @@
+#!/bin/bash
+/usr/local/libexec/dpusim-host/log "$(basename "$0")" "$@"
+echo '{"/nvidia/mode/operating-mode": "DPU"}'

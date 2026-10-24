@@ -1,0 +1,125 @@
+--- a/hw/net/igb.c
++++ b/hw/net/igb.c
+@@ -79,8 +79,15 @@
+ 
+     IGBCore core;
+     bool has_flr;
++
++    /* PCI VPD capability, only present when vpd_serial is set */
++    char *vpd_serial;
++    uint8_t vpd_cap;
++    uint8_t vpd[256];
+ };
+ 
++#define IGB_CAP_VPD_OFFSET      (0xe0)
++
+ #define IGB_CAP_SRIOV_OFFSET    (0x160)
+ #define IGB_VF_OFFSET           (0x80)
+ #define IGB_VF_STRIDE           (2)
+@@ -95,6 +102,73 @@
+ #define E1000E_IO_SIZE      (32)
+ #define E1000E_MSIX_SIZE    (16 * KiB)
+ 
++/*
++ * Minimal VPD: a write of an address with the F flag clear loads the dword at
++ * that address into the data register and sets F, which is what Linux's
++ * pci_vpd_read() polls for.
++ */
++static void igb_vpd_write_config(IGBState *s, uint32_t addr, int len)
++{
++    PCIDevice *dev = PCI_DEVICE(s);
++    uint32_t reg = s->vpd_cap + PCI_VPD_ADDR;
++    uint16_t vaddr;
++
++    if (!s->vpd_cap || !ranges_overlap(addr, len, reg, 2)) {
++        return;
++    }
++    vaddr = pci_get_word(dev->config + reg);
++    if (vaddr & PCI_VPD_ADDR_F) {
++        return;
++    }
++    vaddr &= PCI_VPD_ADDR_MASK & ~3;
++    if (vaddr + 4 <= sizeof(s->vpd)) {
++        memcpy(dev->config + s->vpd_cap + PCI_VPD_DATA, s->vpd + vaddr, 4);
++    } else {
++        pci_set_long(dev->config + s->vpd_cap + PCI_VPD_DATA, 0);
++    }
++    pci_set_word(dev->config + reg, vaddr | PCI_VPD_ADDR_F);
++}
++
++/*
++ * The VPD image of a BlueField-3: identifier string, VPD-R with the serial
++ * number (SN), end tag.
++ */
++static void igb_init_vpd(IGBState *s, Error **errp)
++{
++    PCIDevice *dev = PCI_DEVICE(s);
++    static const char ident[] = "BlueField-3";
++    size_t ilen = strlen(ident), slen = strlen(s->vpd_serial);
++    uint8_t *p = s->vpd;
++    int ret;
++
++    if (slen > 0xff || 3 + ilen + 3 + 3 + slen + 1 > sizeof(s->vpd)) {
++        error_setg(errp, "x-vpd-serial too long");
++        return;
++    }
++    memset(s->vpd, 0, sizeof(s->vpd));
++    *p++ = 0x82;                         /* large resource: identifier */
++    *p++ = ilen & 0xff;
++    *p++ = ilen >> 8;
++    memcpy(p, ident, ilen);
++    p += ilen;
++    *p++ = 0x90;                         /* large resource: VPD-R */
++    *p++ = (3 + slen) & 0xff;
++    *p++ = (3 + slen) >> 8;
++    *p++ = 'S';
++    *p++ = 'N';
++    *p++ = slen;
++    memcpy(p, s->vpd_serial, slen);
++    p += slen;
++    *p++ = 0x78;                         /* small resource: end */
++
++    ret = pci_add_capability(dev, PCI_CAP_ID_VPD, IGB_CAP_VPD_OFFSET, 8, errp);
++    if (ret < 0) {
++        return;
++    }
++    s->vpd_cap = ret;
++    pci_set_word(dev->wmask + ret + PCI_VPD_ADDR, 0xffff);
++}
++
+ static void igb_write_config(PCIDevice *dev, uint32_t addr,
+     uint32_t val, int len)
+ {
+@@ -102,6 +176,7 @@
+ 
+     trace_igb_write_config(addr, val, len);
+     pci_default_write_config(dev, addr, val, len);
++    igb_vpd_write_config(s, addr, len);
+     if (s->has_flr) {
+         pcie_cap_flr_write_config(dev, addr, val, len);
+     }
+@@ -422,6 +497,16 @@
+     macaddr = s->conf.macaddr.a;
+ 
+     /* Add PCI capabilities in reverse order */
++    if (s->vpd_serial && *s->vpd_serial) {
++        Error *local_err = NULL;
++
++        igb_init_vpd(s, &local_err);
++        if (local_err) {
++            error_propagate(errp, local_err);
++            return;
++        }
++    }
++
+     assert(pcie_endpoint_cap_init(pci_dev, 0xa0) > 0);
+ 
+     igb_init_msix(s);
+@@ -594,6 +679,7 @@
+ static Property igb_properties[] = {
+     DEFINE_NIC_PROPERTIES(IGBState, conf),
+     DEFINE_PROP_BOOL("x-pcie-flr-init", IGBState, has_flr, true),
++    DEFINE_PROP_STRING("x-vpd-serial", IGBState, vpd_serial),
+     DEFINE_PROP_END_OF_LIST(),
+ };
+ 

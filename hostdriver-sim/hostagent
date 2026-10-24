@@ -1,0 +1,24 @@
+#!/bin/bash
+# DPF's host agent, on a host whose DPU is simulated: it sees the fake BlueField and the stand-in
+# tools; the real binary is /hostagent.real. Of the pod's containers, only the host agent's has
+# /var/lib/dpf: it builds the fake BlueField there and hands the DMS container (`rundms`) a copy
+# in /tmp/dms, which the two share.
+set -euo pipefail
+sim=/usr/local/libexec/dpusim-host
+shared=/tmp/dms/dpusim
+if [ -d /var/lib/dpf ]; then
+    "${sim}/setup"
+    rm -rf "${shared}"
+    mkdir -p "${shared}"
+    cp -a /var/lib/dpf/dpusim/pci /var/lib/dpf/dpusim/lease.env "${shared}/"
+    touch "${shared}/ready"
+    pci=/var/lib/dpf/dpusim/pci
+else
+    until [ -e "${shared}/ready" ]; do sleep 1; done
+    pci=${shared}/pci
+fi
+mount --bind "${pci}" /sys/bus/pci
+# A reboot is a new boot_id (the reboot stand-ins write it).
+[ "${1:-}" = serve ] && mount --bind /var/lib/dpf/dpusim/boot_id /proc/sys/kernel/random/boot_id
+export PATH=${sim}/bin:${PATH}
+exec /hostagent.real "$@"

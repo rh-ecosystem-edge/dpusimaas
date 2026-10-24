@@ -1,0 +1,4 @@
+#!/bin/bash
+# rshim, for a BlueField that is a VM: the host agent's container makes the device (setup, in the
+# /dev all the pod's containers share); there's nothing to drive.
+exec sleep infinity

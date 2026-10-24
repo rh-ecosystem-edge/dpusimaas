@@ -1,0 +1,14 @@
+[Unit]
+Description=dpusimaas: leases simulated BlueField DPUs
+After=network-online.target libvirtd.service
+Wants=network-online.target
+
+[Service]
+# dpusim adds root's SSH key to the DPU VMs (~/.ssh/id_ed25519.pub).
+Environment=HOME=/root
+ExecStart=@PREFIX@/dpusimaas --listen :80 --dpusim @PREFIX@/dpusim --mockbmc @PREFIX@/mockbmc --python @PREFIX@/venv/bin/python --max-dpus 3 @X86_ARGS@
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

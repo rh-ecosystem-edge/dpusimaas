@@ -1,0 +1,11 @@
+# DPF's hostdriver image for hosts whose DPU is a dpusimaas VM. A host VM's container runtime pulls
+# it in place of DPF's (the ImageTagMirrorSet of openshift-dpf's SIMULATED_DPUS_ONLY), so DPF's own
+# host agent pod runs it unchanged.
+ARG BASE
+FROM ${BASE}
+COPY sim/ /usr/local/libexec/dpusim-host/
+COPY bin/ /usr/local/libexec/dpusim-host/bin/
+COPY dms/dmsc dms/dmscli dms/dmsd /opt/mellanox/doca/services/dms/
+RUN mv /hostagent /hostagent.real && mv /usr/sbin/rshim /usr/sbin/rshim.real
+COPY hostagent /hostagent
+COPY rshim /usr/sbin/rshim

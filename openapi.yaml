@@ -1,0 +1,231 @@
+openapi: 3.1.0
+info:
+  title: dpusimaas
+  version: 1.0.0
+  description: Leases simulated BlueField DPUs.
+servers:
+  - url: http://dpusimaas.tuchfeld.dev
+paths:
+  /v1/info:
+    get:
+      summary: Capacity, modes and levels
+      responses:
+        "200":
+          description: Service info
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Info" }
+  /v1/dpus:
+    get:
+      summary: List leases
+      parameters:
+        - name: owner
+          in: query
+          required: false
+          schema: { type: string }
+        - name: serial
+          in: query
+          required: false
+          schema: { type: string }
+          description: The DPU's serial (any case)
+      responses:
+        "200":
+          description: Leases, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Lease" }
+    post:
+      summary: Lease a simulated DPU
+      description: >-
+        Returns once the lease has its address (and, host-trusted, its host, powered off for the cluster
+        to install). The DPU VM is only created when DPF installs an OS on it (zero-trust: through its
+        Redfish BMC; host-trusted: through the host, which POSTs /v1/dpus/{id}/boot).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateRequest" }
+      responses:
+        "201":
+          description: The new lease
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Lease" }
+        "400": { $ref: "#/components/responses/Error" }
+        "503":
+          description: No room for another simulated DPU
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/dpus/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      summary: One lease, with its events
+      responses:
+        "200":
+          description: The lease
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Lease" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: Release a lease
+      description: Its DPU VM, host, address and BMCs go away.
+      responses:
+        "204": { description: Released }
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/dpus/{id}/renew:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    post:
+      summary: Set when the lease ends
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ttl_hours:
+                  type: integer
+                  minimum: 0
+                  description: End this many hours from now; 0 means never.
+      responses:
+        "200":
+          description: The lease
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Lease" }
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/dpus/{id}/boot:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    post:
+      summary: Boot the DPU VM from a bf.cfg (host-trusted leases)
+      parameters:
+        - name: host_node
+          in: query
+          required: false
+          schema: { type: string }
+          description: The host's node name; the DPU derives the host PF MAC OVN-K expects from it
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary, description: The bf.cfg DPF generated }
+      responses:
+        "200":
+          description: The lease
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Lease" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: A zero-trust lease boots when DPF installs it through its BMC
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/dpus/{id}/reset:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    post:
+      summary: Reset the DPU VM
+      responses:
+        "200":
+          description: The lease
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Lease" }
+        "404": { $ref: "#/components/responses/Error" }
+components:
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Mode:
+      type: string
+      enum: [zero-trust, host-trusted]
+    Level:
+      type: string
+      enum: [vm]
+      description: "vm: DPF installs the DPU, and its OS runs in an aarch64 VM."
+    CreateRequest:
+      type: object
+      required: [owner]
+      properties:
+        owner: { type: string, description: Who the lease is for (GitHub login) }
+        mode: { $ref: "#/components/schemas/Mode" }
+        level: { $ref: "#/components/schemas/Level" }
+        bmc_password:
+          type: string
+          description: Password reported for the DPU BMC's root account (any password is accepted). Generated if empty.
+        ttl_hours:
+          type: integer
+          minimum: 0
+          description: End the lease this many hours from now. Default 0, meaning it lasts until released.
+    Lease:
+      type: object
+      properties:
+        id: { type: string }
+        owner: { type: string }
+        mode: { $ref: "#/components/schemas/Mode" }
+        level: { $ref: "#/components/schemas/Level" }
+        created: { type: string, format: date-time }
+        expires: { type: string, format: date-time, description: Only when the lease has an end }
+        mac: { type: string, description: The lease's MAC; DHCP gives it its address }
+        ip:
+          type: string
+          description: >-
+            Where its BMCs answer: Redfish on 443 (zero-trust: the DPU's; host-trusted: the host's, with
+            virtual media), IPMI lanplus on 623 (the host's)
+        serial: { type: string, description: BlueField serial number }
+        bmc_password: { type: string, description: DPU BMC root password }
+        ipmi_user: { type: string, description: "The host BMC's user (IPMI; host-trusted: Redfish too)" }
+        ipmi_password: { type: string }
+        vm: { type: string, description: Name of the DPU VM }
+        host:
+          type: object
+          description: "Host-trusted: the host, for the cluster to add as a worker"
+          properties:
+            vm: { type: string, description: Name of the host VM }
+            boot_mac: { type: string, description: The NIC it installs and joins the cluster through }
+            root_device: { type: string, description: Its disk }
+        state:
+          type: string
+          enum: [starting, waiting, booting, running, powered-off, failed]
+        events:
+          type: array
+          items:
+            type: object
+            properties:
+              time: { type: string, format: date-time }
+              message: { type: string }
+    Info:
+      type: object
+      properties:
+        max_dpus: { type: integer }
+        leased: { type: integer }
+        modes:
+          type: array
+          items: { $ref: "#/components/schemas/Mode" }
+        levels:
+          type: object
+          additionalProperties: { type: string }
+          description: Each level and what it simulates
+    Error:
+      type: object
+      properties:
+        error: { type: string }

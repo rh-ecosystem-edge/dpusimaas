@@ -1,0 +1,4 @@
+# dpusimaas runs on the aarch64 hypervisor: `cargo build --release --target aarch64-unknown-linux-musl`
+# links a static binary for it without a cross toolchain.
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"
