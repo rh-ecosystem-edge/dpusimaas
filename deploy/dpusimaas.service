@@ -6,6 +6,8 @@ Wants=network-online.target
 [Service]
 # dpusim adds root's SSH key to the DPU VMs (~/.ssh/id_ed25519.pub).
 Environment=HOME=/root
+# The x86 hypervisor's ssh wrapper uses dpusimaas's own key and known-hosts file.
+Environment=PATH=@PREFIX@/ssh:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=@PREFIX@/dpusimaas --listen :80 --dpusim @PREFIX@/dpusim --mockbmc @PREFIX@/mockbmc --python @PREFIX@/venv/bin/python --max-dpus 3 @X86_ARGS@
 Restart=on-failure
 RestartSec=5

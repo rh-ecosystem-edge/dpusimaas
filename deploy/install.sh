@@ -33,7 +33,7 @@ x86_args=
 if [ -n "$X86_HV" ]; then
     x86_addr=$(ssh -G "$X86_HV" | awk '/^hostname /{print $2}')
     echo "Letting dpusimaas drive $X86_HV ($x86_addr)"
-    ARM_HV=$HOST X86_HV=$X86_HV X86_HV_ADDR=$x86_addr "$here/trust-x86-hv.sh"
+    ARM_HV=$HOST X86_HV=$X86_HV X86_HV_ADDR=$x86_addr PREFIX=$PREFIX "$here/trust-x86-hv.sh"
     ssh "$X86_HV" "mkdir -p $PREFIX"
     scp -q "$bin/dpusim-x86_64" "$X86_HV:$PREFIX/dpusim.new"
     ssh "$X86_HV" "mv -f $PREFIX/dpusim.new $PREFIX/dpusim"
