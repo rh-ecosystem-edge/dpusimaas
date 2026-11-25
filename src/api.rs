@@ -73,7 +73,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = match self.0.downcast_ref::<Refusal>() {
             Some(Refusal::NotFound) => StatusCode::NOT_FOUND,
-            Some(Refusal::Full(_)) => StatusCode::SERVICE_UNAVAILABLE,
+            Some(Refusal::Full { .. }) => StatusCode::SERVICE_UNAVAILABLE,
             Some(Refusal::Invalid(_)) => StatusCode::BAD_REQUEST,
             Some(Refusal::Conflict(_)) => StatusCode::CONFLICT,
             None => StatusCode::INTERNAL_SERVER_ERROR,
@@ -128,8 +128,11 @@ async fn openapi_spec() -> Response {
 #[derive(Serialize)]
 struct ServiceInfo {
     leased: usize,
+    leased_dpus: usize,
+    leased_hosts: usize,
     levels: BTreeMap<&'static str, &'static str>,
     max_dpus: usize,
+    max_hosts: usize,
     modes: [Mode; 2],
 }
 
@@ -138,11 +141,15 @@ async fn info(State(manager): Manager) -> Response {
         .into_iter()
         .map(|level| (level.name(), level.description()))
         .collect();
+    let slots = manager.store.slot_counts();
     pretty_json(
         StatusCode::OK,
         &ServiceInfo {
-            max_dpus: manager.config.max_leases,
+            max_dpus: manager.config.slots.dpus,
+            max_hosts: manager.config.slots.hosts,
             leased: manager.store.count(),
+            leased_dpus: slots.dpus,
+            leased_hosts: slots.hosts,
             modes: Mode::ALL,
             levels,
         },

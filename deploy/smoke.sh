@@ -5,8 +5,32 @@
 # and the leftover checks run on $HOST (and $X86_HV).
 set -euo pipefail
 
+config=${CONFIG:-}
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --config)
+            [ $# -ge 2 ] || { echo "--config needs a file" >&2; exit 2; }
+            config=$2
+            shift 2
+            ;;
+        *)
+            echo "unknown argument: $1" >&2
+            exit 2
+            ;;
+    esac
+done
+
+default_config="${XDG_CONFIG_HOME:-$HOME/.config}/dpusimaas/machines.env"
+if [ -n "$config" ]; then
+    # shellcheck disable=SC1090
+    . "$config"
+elif [ -f "$default_config" ]; then
+    # shellcheck disable=SC1090,SC1091
+    . "$default_config"
+fi
+
 URL=${URL:-http://dpusimaas.tuchfeld.dev}
-HOST=${HOST:-aarchv}
+HOST=${HOST:?the aarch64 hypervisor (ssh target)}
 X86_HV=${X86_HV:-}
 OWNER=${OWNER:-smoke-test}
 CLUSTER=${CLUSTER:-smoke-test}
@@ -30,17 +54,22 @@ rshim=$(curl -sfk --max-time 30 -u "root:$PASSWORD" "https://$ip/redfish/v1/Mana
 [ "$rshim" = True ] || fail "rshim is $rshim"
 echo "ok   rshim enabled"
 
-ipmi() { ssh "$HOST" "IPMI_PASSWORD='$ipmi_password' ipmitool -I lanplus -H $ip -U $ipmi_user -E chassis power $1"; }
+ipmi() {
+    # shellcheck disable=SC2029
+    ssh "$HOST" "IPMI_PASSWORD='$ipmi_password' ipmitool -I lanplus -H $ip -U $ipmi_user -E chassis power $1"
+}
 [ "$(ipmi status)" = "Chassis Power is on" ] || fail "IPMI power status: $(ipmi status)"
 ipmi cycle >/dev/null || fail "IPMI power cycle"
 curl -sf "$URL/v1/dpus/$id" | grep -q '"host cycle"' || fail "the power cycle didn't reach dpusimaas"
 echo "ok   IPMI power status and cycle"
 
 gateway=$(curl -sf "$URL/v1/fabric?cluster=$CLUSTER" | field "['gateway']") || fail "no leaf for $CLUSTER"
+# shellcheck disable=SC2029
 ssh "$HOST" "podman exec dpusim-leaf-$CLUSTER ip link show swp$id >/dev/null" || fail "the leaf has no port for $id"
 echo "ok   leaf of $CLUSTER at $gateway, with a port for $id"
 
 curl -sf -o /dev/null -X DELETE "$URL/v1/dpus/$id" || fail "couldn't end the lease"
+# shellcheck disable=SC2029
 left=$(ssh "$HOST" "{ ip netns list; ip -br link; podman ps --format '{{.Names}}'; } | grep -cE 'dpusim-$id|dsa-$id|ds[up]-$id|dpusim-leaf-$CLUSTER' || true")
 [ "$left" = 0 ] || fail "lease $id left its namespace, links or leaf behind"
 id=
@@ -60,11 +89,14 @@ if [ -n "$X86_HV" ]; then
     echo "ok   the host's Redfish shows its one system, with a password"
 
     [ "$(ipmi status)" = "Chassis Power is off" ] || fail "IPMI power status: $(ipmi status)"
+    # shellcheck disable=SC2029
     ssh "$X86_HV" "virsh dominfo $vm >/dev/null && ip link show dsw-$id >/dev/null" || fail "no host VM or wire on $X86_HV"
     echo "ok   host VM and wire on $X86_HV, powered off"
 
     curl -sf -o /dev/null -X DELETE "$URL/v1/dpus/$id" || fail "couldn't end the lease"
+    # shellcheck disable=SC2029
     left=$(ssh "$HOST" "{ ip netns list; ip -br link; } | grep -c $id || true")
+    # shellcheck disable=SC2029
     left_x86=$(ssh "$X86_HV" "{ virsh list --all --name; virsh vol-list default; ip -br link; } | grep -c $id || true")
     [ "$left" = 0 ] && [ "$left_x86" = 0 ] || fail "lease $id left things behind ($left here, $left_x86 on $X86_HV)"
     id=

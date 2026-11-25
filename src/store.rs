@@ -8,7 +8,10 @@ use std::{
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
 
-use crate::lease::Lease;
+use crate::{
+    capacity::{SimulatorKind, SlotCounts, SlotLimits},
+    lease::Lease,
+};
 
 /// The leases, kept in a JSON file so a restart picks them up again.
 pub struct LeaseStore {
@@ -39,10 +42,20 @@ impl LeaseStore {
         })
     }
 
-    pub fn add(&self, lease: Lease) -> Result<()> {
+    /// Adds a lease only if it fits both slot pools; says which pool is full otherwise.
+    pub fn add_within_capacity(
+        &self,
+        lease: Lease,
+        limits: SlotLimits,
+    ) -> Result<Option<SimulatorKind>> {
         let mut leases = self.leases.lock();
+        let full = limits.full_for(lease.mode, SlotCounts::from_leases(leases.values()));
+        if full.is_some() {
+            return Ok(full);
+        }
         leases.insert(lease.id.clone(), lease);
-        self.save(&leases)
+        self.save(&leases)?;
+        Ok(None)
     }
 
     /// Changes a lease and saves; returns the changed lease, or none when there's no such lease.
@@ -76,6 +89,10 @@ impl LeaseStore {
 
     pub fn count(&self) -> usize {
         self.leases.lock().len()
+    }
+
+    pub fn slot_counts(&self) -> SlotCounts {
+        SlotCounts::from_leases(self.leases.lock().values())
     }
 
     fn save(&self, leases: &BTreeMap<String, Lease>) -> Result<()> {
@@ -125,8 +142,9 @@ mod tests {
         let store = LeaseStore::open(&state_dir)?;
         let first = some_lease("first");
         let second = some_lease("second");
-        store.add(first.clone())?;
-        store.add(second.clone())?;
+        let limits = SlotLimits { dpus: 2, hosts: 2 };
+        assert_eq!(store.add_within_capacity(first.clone(), limits)?, None);
+        assert_eq!(store.add_within_capacity(second.clone(), limits)?, None);
         store.update(&first.id, |lease| lease.record("changed"))?;
         store.remove(&second.id)?;
 

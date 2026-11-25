@@ -35,6 +35,6 @@
      DEFINE_PROP_BOOL("x-pcie-flr-init", IGBState, has_flr, true),
      DEFINE_PROP_STRING("x-vpd-serial", IGBState, vpd_serial),
 +    DEFINE_PROP_BOOL("x-vf-loopback", IGBState, core.vf_loopback, true),
-     DEFINE_PROP_END_OF_LIST(),
  };
  
+ static void igb_class_init(ObjectClass *class, const void *data)

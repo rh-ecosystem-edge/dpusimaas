@@ -6,12 +6,14 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use parking_lot::Mutex;
+use parking_lot::Mutex as SyncMutex;
 use serde::Deserialize;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio_util::sync::{CancellationToken, DropGuard};
 
 use crate::{
     bmc::{self, MockBmc},
+    capacity::{SimulatorKind, SlotLimits},
     dhcp::{self, DhcpLease},
     fabric,
     host::{HostConfig, Link},
@@ -34,7 +36,7 @@ pub struct ServiceConfig {
     pub mockbmc: PathBuf,
     /// Firmware versions a BFB without a software inventory installs (mockbmc's -bfb-versions).
     pub bfb_versions: String,
-    pub max_leases: usize,
+    pub slots: SlotLimits,
     pub vm: VmConfig,
     /// Host-trusted leases' hosts.
     pub host: HostConfig,
@@ -45,8 +47,11 @@ pub struct ServiceConfig {
 pub enum Refusal {
     #[error("no such DPU")]
     NotFound,
-    #[error("no room for another simulated DPU: all {0} are leased")]
-    Full(usize),
+    #[error("no room for another {simulator}: all {slots} slots are leased")]
+    Full {
+        simulator: SimulatorKind,
+        slots: usize,
+    },
     #[error("{0}")]
     Invalid(String),
     #[error("{0}")]
@@ -68,7 +73,9 @@ pub struct LeaseRuntime {
 pub struct LeaseManager {
     pub config: ServiceConfig,
     pub store: LeaseStore,
-    running: Mutex<HashMap<String, LeaseRuntime>>,
+    running: SyncMutex<HashMap<String, LeaseRuntime>>,
+    fabric_locks: SyncMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+    dhcp_lock: AsyncMutex<()>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -163,8 +170,18 @@ impl LeaseManager {
         Ok(Arc::new(LeaseManager {
             config,
             store,
-            running: Mutex::new(HashMap::new()),
+            running: SyncMutex::new(HashMap::new()),
+            fabric_locks: SyncMutex::new(HashMap::new()),
+            dhcp_lock: AsyncMutex::new(()),
         }))
+    }
+
+    fn cluster_fabric_lock(&self, cluster: &str) -> Arc<AsyncMutex<()>> {
+        self.fabric_locks
+            .lock()
+            .entry(cluster.to_owned())
+            .or_default()
+            .clone()
     }
 
     /// Brings the stored leases back up after a restart: their namespaces, addresses and BMCs. The
@@ -187,12 +204,17 @@ impl LeaseManager {
         if terms.mode == Mode::HostTrusted {
             self.config.host.check()?;
         }
-        let max_leases = self.config.max_leases;
-        if self.store.count() >= max_leases {
-            return Err(Refusal::Full(max_leases).into());
-        }
         let lease = Lease::new(terms);
-        self.store.add(lease.clone())?;
+        if let Some(simulator) = self
+            .store
+            .add_within_capacity(lease.clone(), self.config.slots)?
+        {
+            let slots = match simulator {
+                SimulatorKind::Dpu => self.config.slots.dpus,
+                SimulatorKind::Host => self.config.slots.hosts,
+            };
+            return Err(Refusal::Full { simulator, slots }.into());
+        }
         if let Err(error) = self.start(&lease).await {
             if let Err(cleanup_error) = self.destroy(&lease.id).await {
                 tracing::error!(
@@ -224,8 +246,13 @@ impl LeaseManager {
         // Whatever started stops again if a later step fails.
         let stop_on_failure: DropGuard = stop.clone().drop_guard();
         netns::ensure(lease, &self.config.bridge).await?;
+        let dhcp_guard = self.dhcp_lock.lock().await;
         let address = dhcp::acquire_address(lease, lease.ip).await?;
+        drop(dhcp_guard);
+        let fabric_lock = self.cluster_fabric_lock(&lease.cluster);
+        let fabric_guard = fabric_lock.lock().await;
         fabric::attach(&self.config.vm.dpusim, lease, &self.config.bridge).await?;
+        drop(fabric_guard);
         let mock_bmc = self.start_bmcs(lease, &stop).await?;
         let runtime = LeaseRuntime {
             mock_bmc: Some(mock_bmc.clone()),
@@ -244,8 +271,13 @@ impl LeaseManager {
         let stop = CancellationToken::new();
         let stop_on_failure: DropGuard = stop.clone().drop_guard();
         netns::ensure(lease, &self.config.bridge).await?;
+        let dhcp_guard = self.dhcp_lock.lock().await;
         let address = dhcp::acquire_address(lease, lease.ip).await?;
+        drop(dhcp_guard);
+        let fabric_lock = self.cluster_fabric_lock(&lease.cluster);
+        let fabric_guard = fabric_lock.lock().await;
         fabric::attach(&self.config.vm.dpusim, lease, &self.config.bridge).await?;
+        drop(fabric_guard);
         let host_config = &self.config.host;
         let host = host_config
             .ensure(lease)
@@ -302,6 +334,11 @@ impl LeaseManager {
         if let Some(runtime) = self.running.lock().remove(lease_id) {
             runtime.stop.cancel();
         }
+        if lease.ip.is_some()
+            && let Err(error) = dhcp::release_address(&lease).await
+        {
+            tracing::warn!(lease = lease_id, "releasing the DHCP address: {error:#}");
+        }
         if let Err(error) = self.config.vm.delete(&lease).await {
             tracing::error!(lease = lease_id, "deleting the DPU VM: {error:#}");
         }
@@ -310,9 +347,12 @@ impl LeaseManager {
         {
             tracing::error!(lease = lease_id, "deleting the host VM: {error:#}");
         }
+        let fabric_lock = self.cluster_fabric_lock(&lease.cluster);
+        let fabric_guard = fabric_lock.lock().await;
         if let Err(error) = fabric::detach(&self.config.vm.dpusim, &lease).await {
             tracing::error!(lease = lease_id, "detaching from the leaf: {error:#}");
         }
+        drop(fabric_guard);
         netns::delete(lease_id).await;
         let work_dir = self.work_dir(lease_id);
         if work_dir.exists() {

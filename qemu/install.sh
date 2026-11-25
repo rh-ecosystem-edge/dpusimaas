@@ -38,7 +38,7 @@ fi
 echo "Building qemu-kvm-$nvr with the igb patches in $ubi (this takes a while)"
 # Bounded parallelism and no process limit: with all of a big host's cores, the build runs out of
 # processes and threads.
-podman run --rm --pids-limit=-1 -v "$WORK:/work:Z" "$ubi" bash -euc "
+podman run --rm --pids-limit=-1 --cgroups=disabled -v "$WORK:/work:Z" "$ubi" bash -euc "
     dnf -q -y install rpm-build dnf-plugins-core >/dev/null
     cd /work
     [ -f qemu-kvm-$nvr.src.rpm ] || dnf -q download --source --enablerepo=rhel-\$(rpm -E %rhel)-for-x86_64-appstream-source-rpms qemu-kvm-$nvr

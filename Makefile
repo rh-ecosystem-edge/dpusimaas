@@ -2,6 +2,7 @@
 #
 #   make build                 bin/dpusimaas, bin/mockbmc and bin/dpusim (aarch64)
 #   make test                  dpusimaas's and mockbmc's tests
+#   make prepare-arm           prepare the aarch64 hypervisor ($(ARM_HV))
 #   make deploy                build, then install on the hypervisors and restart
 #   make smoke                 lease a DPU, check its BMCs, end the lease
 #   make qemu                  build and install the patched QEMU on the x86 hypervisor ($(X86_HV))
@@ -14,14 +15,19 @@
 # dpusimaas is Rust; mockbmc (the DPU BMC, upstream DPF's mock Redfish server) is Go.
 # dpusim comes from the openshift-dpf sim (sim/dpusim), at DPUSIM_SRC.
 
-ARM_HV     ?= aarchv
-X86_HV     ?= hv2
+ARM_HV     ?=
+X86_HV     ?=
 DPUSIM_SRC ?= $(HOME)/repos/openshift-dpf/sim/dpusim
 PREFIX     ?= /opt/dpusimaas
+MAX_DPUS   ?= 4
+MAX_HOSTS  ?= 3
+config_dir := $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME),$(HOME)/.config)
+default_config := $(wildcard $(config_dir)/dpusimaas/machines.env)
+CONFIG     ?= $(default_config)
 DPF_VERSION         ?= v26.4.1
 HOSTDRIVER_SIM_REPO ?= quay.io/otuchfel/hostdriver-sim
 
-.PHONY: build build-dpusimaas build-mockbmc build-dpusim deploy smoke qemu hostdriver-image ovn-sim status logs test
+.PHONY: build build-dpusimaas build-mockbmc build-dpusim prepare-arm prepare-x86 deploy smoke qemu hostdriver-image ovn-sim status logs test
 
 build: build-dpusimaas build-mockbmc build-dpusim
 
@@ -47,7 +53,25 @@ test:
 	go test ./...
 
 deploy: build
-	HOST=$(ARM_HV) X86_HV=$(X86_HV) PREFIX=$(PREFIX) deploy/install.sh
+	if [ -n "$(CONFIG)" ]; then \
+		deploy/install.sh --config "$(CONFIG)"; \
+	else \
+		HOST=$(ARM_HV) X86_HV=$(X86_HV) PREFIX=$(PREFIX) MAX_DPUS=$(MAX_DPUS) MAX_HOSTS=$(MAX_HOSTS) deploy/install.sh; \
+	fi
+
+prepare-x86:
+	if [ -n "$(CONFIG)" ]; then \
+		deploy/prepare-x86-hv.sh --config "$(CONFIG)"; \
+	else \
+		X86_HV=$(X86_HV) deploy/prepare-x86-hv.sh; \
+	fi
+
+prepare-arm:
+	if [ -n "$(CONFIG)" ]; then \
+		deploy/prepare-arm-hv.sh --config "$(CONFIG)"; \
+	else \
+		HOST=$(ARM_HV) deploy/prepare-arm-hv.sh; \
+	fi
 
 qemu:
 	HOST=$(X86_HV) qemu/install.sh
@@ -62,7 +86,11 @@ ovn-sim:
 	ovn-sim/build.sh
 
 smoke:
-	HOST=$(ARM_HV) X86_HV=$(X86_HV) deploy/smoke.sh
+	if [ -n "$(CONFIG)" ]; then \
+		deploy/smoke.sh --config "$(CONFIG)"; \
+	else \
+		HOST=$(ARM_HV) X86_HV=$(X86_HV) deploy/smoke.sh; \
+	fi
 
 status:
 	ssh $(ARM_HV) 'systemctl status --no-pager dpusimaas; curl -s localhost/v1/info'

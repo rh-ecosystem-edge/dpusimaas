@@ -5,6 +5,7 @@
 
 mod api;
 mod bmc;
+mod capacity;
 mod command;
 mod dhcp;
 mod fabric;
@@ -27,6 +28,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    capacity::SlotLimits,
     host::HostConfig,
     manager::{LeaseManager, ServiceConfig},
     vm::VmConfig,
@@ -57,9 +59,12 @@ struct DpusimaasArgs {
     /// The mockbmc binary, for the DPU BMCs
     #[arg(long, default_value = "/opt/dpusimaas/mockbmc")]
     mockbmc: PathBuf,
-    /// How many simulated DPUs can be leased at once
+    /// How many DPU VMs can be leased at once on the aarch64 hypervisor
     #[arg(long = "max-dpus", default_value_t = 4)]
     max_dpus: usize,
+    /// How many host VMs can be leased at once on the x86 hypervisor
+    #[arg(long = "max-hosts", default_value_t = 4)]
+    max_hosts: usize,
     /// The dpusim binary
     #[arg(long, default_value = "/usr/local/bin/dpusim")]
     dpusim: PathBuf,
@@ -112,7 +117,10 @@ impl DpusimaasArgs {
             python: self.python,
             mockbmc: self.mockbmc,
             bfb_versions: self.bfb_versions,
-            max_leases: self.max_dpus,
+            slots: SlotLimits {
+                dpus: self.max_dpus,
+                hosts: self.max_hosts,
+            },
         }
     }
 }
@@ -190,7 +198,8 @@ async fn serve_public_api(
         .into_future();
     tracing::info!(
         addr = address,
-        max_dpus = manager.config.max_leases,
+        max_dpus = manager.config.slots.dpus,
+        max_hosts = manager.config.slots.hosts,
         "dpusimaas listening"
     );
     let mut public_api = tokio::spawn(serving);

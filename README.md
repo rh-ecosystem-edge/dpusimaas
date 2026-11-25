@@ -32,11 +32,21 @@ Directly: see the API in [openapi.yaml](openapi.yaml).
 
 - A deployment's DPU hosts are all simulated or all real.
 - Capacity is limited by the hypervisors' memory: each DPU and each host takes 16 GiB.
+- DPU and host slots are independent. A zero-trust lease uses one DPU slot; a host-trusted lease
+  uses one DPU slot and one host slot.
 
 ## Running your own
 
-`make deploy ARM_HV=<ssh host> X86_HV=<ssh host>` installs it on an aarch64 libvirt host (DPUs) and
-an x86 one (hosts; `make qemu` first). `make smoke` checks it.
+`make deploy` installs it on the aarch64 and x86 hypervisors named in your external machine
+inventory. `make smoke` checks it.
+
+Put host-specific settings in `~/.config/dpusimaas/machines.env` (see
+`deploy/dpusimaas.env.example`) and run `make prepare-arm` and `make prepare-x86` to prepare the
+hypervisors:
+packages, libvirt, idempotent LAN bridges, storage, and (on x86) the patched QEMU. Each hypervisor
+must already be RHSM-registered; the scripts intentionally do not handle registration credentials.
+Then run `make deploy CONFIG=...` to build and install dpusimaas with the configured hypervisors and
+slot limits.
 
 dpusimaas itself is Rust (`src/`). Each DPU's BMC is `mockbmc` (`mockbmc/`), a small Go wrapper
 around upstream DPF's mock BlueField Redfish server, so it stays the same as upstream; dpusimaas runs

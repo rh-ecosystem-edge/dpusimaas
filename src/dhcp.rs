@@ -50,6 +50,38 @@ pub async fn acquire_address(lease: &Lease, previous: Option<Ipv4Addr>) -> Resul
     Ok(dhcp_lease)
 }
 
+/// Tells the DHCP server the lease no longer needs its address.
+pub async fn release_address(lease: &Lease) -> Result<()> {
+    let Some(address) = lease.ip else {
+        return Ok(());
+    };
+    let mac = parse_mac(&lease.mac)?;
+    let client_socket = netns::run_in(&lease.id, open_client_socket)
+        .await
+        .context("opening a DHCP release socket")?;
+    let socket = UdpSocket::from_std(client_socket).context("registering the DHCP socket")?;
+    let mut message = Message::default();
+    message
+        .set_xid(rand::random())
+        .set_flags(Flags::default().set_broadcast())
+        .set_chaddr(&mac)
+        .set_ciaddr(address);
+    let client_identifier = std::iter::once(1).chain(mac).collect();
+    message
+        .opts_mut()
+        .insert(DhcpOption::MessageType(MessageType::Release));
+    message
+        .opts_mut()
+        .insert(DhcpOption::ClientIdentifier(client_identifier));
+    let encoded = encode(&message)?;
+    let server = SocketAddrV4::new(Ipv4Addr::BROADCAST, SERVER_PORT);
+    socket
+        .send_to(&encoded, server)
+        .await
+        .with_context(|| format!("sending DHCP release for {address} to {server}"))?;
+    Ok(())
+}
+
 async fn configure_eth0(namespace: &str, dhcp_lease: &DhcpLease) -> Result<()> {
     let address = format!("{}/{}", dhcp_lease.address, dhcp_lease.prefix_len);
     let lifetime = dhcp_lease.lease_time.as_secs().to_string();
